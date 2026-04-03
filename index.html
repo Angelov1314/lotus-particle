@@ -1030,16 +1030,17 @@ function animate() {
         const u = points.material.uniforms;
         u.uTime.value     = time;
         u.uProgress.value = Math.max(0, Math.min(1, currentProgress));
-        // Erode cycle: 8s erode, 2s hold, 5s reassemble, 3s pause → repeat
+        // Erode cycle: 20s erode, 2s hold, 20s reassemble, 3s pause → repeat
         if (fx.erode) {
-            const cycleDur = 18.0; // total cycle seconds
-            const cycleT = (time % cycleDur) / cycleDur; // 0→1
-            // Map: 0→0.44=erode, 0.44→0.55=hold, 0.55→0.83=reassemble, 0.83→1=pause
+            const cycleDur = 45.0; // 20 + 2 + 20 + 3
+            const cycleT = (time % cycleDur) / cycleDur;
+            // Breakpoints: erode=20/45, hold=22/45, reassemble=42/45, pause=45/45
+            const E = 20/45, H = 22/45, R = 42/45;
             let phase;
-            if (cycleT < 0.44)      phase = (cycleT / 0.44) * 0.55;          // eroding
-            else if (cycleT < 0.55) phase = 0.55 + (cycleT - 0.44) / 0.11 * 0.15; // hold
-            else if (cycleT < 0.83) phase = 0.70 + (cycleT - 0.55) / 0.28 * 0.30; // reassemble
-            else                    phase = 0.0;                               // pause/reset
+            if (cycleT < E)      phase = (cycleT / E) * 0.55;
+            else if (cycleT < H) phase = 0.55 + (cycleT - E) / (H - E) * 0.15;
+            else if (cycleT < R) phase = 0.70 + (cycleT - H) / (R - H) * 0.30;
+            else                 phase = 0.0;
             u.uErodePhase.value = phase;
         } else {
             u.uErodePhase.value = 0.0; // fully intact when off
