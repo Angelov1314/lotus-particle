@@ -256,11 +256,13 @@ const vertexShader = `
             pos += aRandom * uProgress * 2.5;
 
         } else if(uPhysics == 2){
-            // Accretion disk: flatten + Keplerian orbit when closed
-            float flatten = mix(1.0, 0.05, 1.0 - uProgress);
+            // Accretion disk: partial flatten + gentle Keplerian orbit
+            // Keep 30% of Y height so the flower retains some 3D volume
+            float flatten = mix(1.0, 0.3, 1.0 - uProgress);
             pos.y *= flatten;
             float radius = length(pos.xz);
-            float orbitalSpeed = (1.0 - uProgress) * 3.0 / max(radius, 0.1);
+            // Slower orbit: cap orbital speed so inner particles don't spin into a blur
+            float orbitalSpeed = (1.0 - uProgress) * 1.2 / max(radius, 0.5);
             float angle = uTime * orbitalSpeed;
             float s = sin(angle), c = cos(angle);
             vec2 rot = vec2(pos.x*c - pos.z*s, pos.x*s + pos.z*c);
@@ -277,13 +279,27 @@ const vertexShader = `
             pos += aRandom * uProgress * 2.5;
 
         } else if(uPhysics == 4){
-            // Drift: gentle upward micro-gravity — particles float upward slowly
-            // drift strength varies per particle via aOffset, more scattered = more drift
-            float driftSpeed = 0.3 + aOffset * 0.4;
-            pos.y += sin(uTime * driftSpeed + aOffset * 6.28) * 0.15 * (1.0 - uProgress * 0.5);
-            pos.y += uTime * 0.012 * (1.0 - uProgress * 0.6); // steady upward creep
-            // wrap: reset particles that drift too high (mod in worldspace)
-            pos.y = mod(pos.y + 2.0, 4.0) - 2.0;
+            // Drift: most particles stay in place (preserve shape), only a
+            // sparse subset (~12%) slowly and continuously rise upward.
+            // Selection is deterministic via aOffset so the same particles
+            // always drift, giving a "soul embers rising" look.
+            float selector = fract(sin(aOffset * 431.7) * 7823.3); // 0-1 hash per particle
+            bool isDrifter = selector < 0.12; // ~12% of particles
+
+            if(isDrifter){
+                // Each drifter has its own speed (slow, meditative)
+                float speed = 0.02 + selector * 0.15; // 0.02 ~ 0.034
+                // Rise continuously over time, wrap at large height to loop back
+                float rise = mod(uTime * speed + aOffset * 3.0, 6.0);
+                pos.y += rise;
+                // Gentle horizontal sway so they don't rise in a straight column
+                pos.x += sin(uTime * 0.3 + aOffset * 5.0) * 0.06;
+                pos.z += cos(uTime * 0.25 + aOffset * 3.7) * 0.06;
+                // Fade-style: shrink point as it gets high (handled via aRandom small scatter)
+                pos += aRandom * 0.03;
+            }
+            // Non-drifters: stay exactly at original position (shape preserved)
+            // Only apply scatter when hand opens
             pos += aRandom * uProgress * 2.5;
 
         } else if(uPhysics == 5){
@@ -302,23 +318,23 @@ const vertexShader = `
             float xRot = pos.x * cosA - w * sinA;
             float wRot = pos.x * sinA + w * cosA;
 
-            // Secondary ZW rotation (gentler: 0.3x amplitude, different axis)
-            // Using ZW instead of YW avoids collapsing the flower's Y spread
-            float cosB = cos(angle * 0.3 + ambient * 0.8);
-            float sinB = sin(angle * 0.3 + ambient * 0.8);
+            // Secondary ZW rotation (half-speed, preserves Y spread unlike YW)
+            float cosB = cos(angle * 0.5 + ambient * 0.8);
+            float sinB = sin(angle * 0.5 + ambient * 0.8);
             float zRot   = pos.z * cosB - wRot * sinB;
             float wFinal = pos.z * sinB + wRot * cosB;
 
             // Stereographic projection 4D→3D: P' = P * (dist / (dist - w))
             float dist4 = 2.5;
             projScale = dist4 / (dist4 - wFinal);
-            // Clamp tighter: min 0.6 prevents collapse, max 4 prevents explosion
-            projScale = clamp(projScale, 0.6, 4.0);
+            // Guard singularity but allow strong variation
+            projScale = clamp(projScale, 0.4, 5.0);
 
-            // Blend projected pos with original based on progress
-            // → at low progress the flower stays mostly recognisable
-            vec3 projPos = vec3(xRot * projScale, pos.y * projScale, zRot * projScale);
-            pos = mix(pos, projPos, uProgress);
+            // Apply directly — angle is already gated by uProgress so
+            // at progress=0 the rotation is identity (no need for extra mix)
+            pos.x = xRot  * projScale;
+            pos.y = pos.y  * projScale;
+            pos.z = zRot   * projScale;
 
             // Random scatter proportional to projection, gated by progress
             pos += aRandom * uProgress * 0.6 * projScale;
@@ -379,19 +395,19 @@ const vertexShader = `
         if(uRipple){
             vec2 worldXY = (modelMatrix * vec4(pos, 1.0)).xy;
             float d = distance(worldXY, uMouse);
-            // Outward ring wave: k=8 (tightness), ω=6 (speed)
-            float wave = sin(d * 8.0 - uTime * 6.0);
-            // Gaussian envelope: attenuates beyond ~1.5 world units
-            float env  = exp(-d * d * 0.5);
+            // Outward ring wave: k=12 (tighter rings), ω=6 (speed)
+            float wave = sin(d * 12.0 - uTime * 6.0);
+            // Gaussian envelope: steeper falloff (2.0) → affects ~0.7 world units
+            float env  = exp(-d * d * 2.0);
             float disp = wave * env;
-            // Z push (depth ripple perpendicular to screen)
-            pos.z += disp * 0.35;
-            // Radial XY push (surface spreads away from cursor)
+            // Z push (depth ripple) — reduced from 0.35 to 0.15
+            pos.z += disp * 0.15;
+            // Radial XY push — reduced from 0.08 to 0.03
             if(d > 0.001){
-                pos.xy += normalize(worldXY - uMouse) * disp * 0.08;
+                pos.xy += normalize(worldXY - uMouse) * disp * 0.03;
             }
-            // Bright highlight at ring crests — liquid-light feel
-            vBrightBoost *= 1.0 + max(0.0, wave) * env * 0.8;
+            // Subtle highlight at ring crests
+            vBrightBoost *= 1.0 + max(0.0, wave) * env * 0.4;
         }
 
         // ── Flicker: jitter position slightly ────────────────────────────────
