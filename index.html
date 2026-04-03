@@ -79,6 +79,9 @@
             <button class="btn" id="btn-drift" onclick="setPhysics('drift')">↑ drift</button>
             <button class="btn" id="btn-tesseract" onclick="setPhysics('tesseract')">4D flow</button>
         </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-aizawa" onclick="setPhysics('aizawa')">chaos</button>
+        </div>
     </div>
 
     <div class="panel-section">
@@ -93,6 +96,9 @@
         <div class="btn-row">
             <button class="btn" id="btn-spring" onclick="toggleFX('spring')">spring</button>
             <button class="btn" id="btn-bloom" onclick="toggleFX('bloom')">bloom</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-ripple" onclick="toggleFX('ripple')">ripple</button>
         </div>
     </div>
 
@@ -135,7 +141,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 let scene, camera, renderer, controls, points, composer, bloomPass;
 let cachedVertices = null, cachedGltf = null, cachedColors = null;
 let colorMode = 'untextured', physicsMode = 'linear';
-let fx = { flicker: false, holo: false, curl: false, spring: false, bloom: false };
+let fx = { flicker: false, holo: false, curl: false, spring: false, bloom: false, ripple: false };
+let mouseWorld = new THREE.Vector2(-999, -999); // lerp target, starts off-screen
 let holoTime = 0; // tracks holo flicker phase
 
 let targetProgress = 0, currentProgress = 0, velocity = 0;
@@ -148,12 +155,14 @@ const STATUS = document.getElementById('status');
 const vertexShader = `
     uniform float uTime;
     uniform float uProgress;
-    uniform int uPhysics;     // 0=linear, 1=vortex, 2=accretion, 3=gravity, 4=drift, 5=tesseract
+    uniform int uPhysics;     // 0=linear, 1=vortex, 2=accretion, 3=gravity, 4=drift, 5=tesseract, 6=aizawa
     uniform int uColorMode;   // 0=cyan, 1=texture, 2=aurora, 3=thermal
     uniform bool uFlicker;
     uniform bool uHolo;
     uniform bool uCurl;
+    uniform bool uRipple;
     uniform vec2 uPalm;
+    uniform vec2 uMouse;       // world-space XY of cursor, lerp-smoothed
     uniform float uHoloBrightness;
 
     attribute vec3 aRandom;
@@ -314,6 +323,43 @@ const vertexShader = `
             // Random scatter proportional to projection, gated by progress
             pos += aRandom * uProgress * 0.6 * projScale;
 
+        } else if(uPhysics == 6){
+            // ── Aizawa Attractor (Chaos) ─────────────────────────────────────
+            // Aizawa attractor differential equations applied as a displacement
+            // field. Particles are "captured" into chaotic orbital paths as the
+            // hand opens — creating a living, breathing soul-cocoon shape.
+            // Parameters tuned to stay within ~[-2,2] range.
+            float a = 0.95, b = 0.7, c = 0.6, d = 3.5, ee = 0.25, f = 0.1;
+            vec3 p = position * 0.9; // scale input to attractor's sweet spot
+
+            // Evaluate instantaneous velocity field at this particle's position
+            float dx = (p.z - b) * p.x - d * p.y;
+            float dy = d * p.x + (p.z - b) * p.y;
+            float dz = c + a * p.z
+                       - (p.z * p.z * p.z) / 3.0
+                       - (p.x * p.x + p.y * p.y) * (1.0 + ee * p.z)
+                       + f * p.z * p.x * p.x * p.x;
+
+            // Pull particles along the attractor field proportional to progress
+            // Multi-step integration (3 Euler steps) for smoother orbital feel
+            float dt = uProgress * 0.6;
+            vec3 vel = vec3(dx, dy, dz);
+            pos += vel * dt;
+            // second step: re-evaluate at displaced position for smoother arcs
+            vec3 p2 = (position + vel * dt * 0.5) * 0.9;
+            float dx2 = (p2.z - b) * p2.x - d * p2.y;
+            float dy2 = d * p2.x + (p2.z - b) * p2.y;
+            float dz2 = c + a * p2.z - (p2.z*p2.z*p2.z)/3.0
+                        - (p2.x*p2.x + p2.y*p2.y) * (1.0 + ee * p2.z)
+                        + f * p2.z * p2.x * p2.x * p2.x;
+            pos += vec3(dx2, dy2, dz2) * dt * 0.4;
+
+            // Slow time-rotation of the whole attractor — gives the cocoon a spin
+            pos = rotateY(pos, uTime * 0.18 * uProgress);
+
+            // Subtle random texture to break pure mathematical smoothness
+            pos += aRandom * uProgress * 0.4;
+
         } else {
             // Linear
             pos += aRandom * uProgress * 2.5;
@@ -323,6 +369,29 @@ const vertexShader = `
         if(uCurl){
             vec3 cn = curlNoise(pos * 1.5 + uTime * 0.15) * uProgress * 1.2;
             pos += cn;
+        }
+
+        // ── Mouse ripple ─────────────────────────────────────────────────────
+        // Wave rings propagate outward from cursor. Formula:
+        //   displacement = sin(k*d - ω*t) * exp(-d²*falloff)
+        // Applied as Z-wobble + radial XY push for a water-surface feel.
+        // Also boosts vBrightBoost at the bright ring crests.
+        if(uRipple){
+            vec2 worldXY = (modelMatrix * vec4(pos, 1.0)).xy;
+            float d = distance(worldXY, uMouse);
+            // Outward ring wave: k=8 (tightness), ω=6 (speed)
+            float wave = sin(d * 8.0 - uTime * 6.0);
+            // Gaussian envelope: attenuates beyond ~1.5 world units
+            float env  = exp(-d * d * 0.5);
+            float disp = wave * env;
+            // Z push (depth ripple perpendicular to screen)
+            pos.z += disp * 0.35;
+            // Radial XY push (surface spreads away from cursor)
+            if(d > 0.001){
+                pos.xy += normalize(worldXY - uMouse) * disp * 0.08;
+            }
+            // Bright highlight at ring crests — liquid-light feel
+            vBrightBoost *= 1.0 + max(0.0, wave) * env * 0.8;
         }
 
         // ── Flicker: jitter position slightly ────────────────────────────────
@@ -525,6 +594,8 @@ function buildPoints(vertices, colors) {
             uHolo:            { value: false },
             uHoloBrightness:  { value: 1.0 },
             uCurl:            { value: false },
+            uRipple:          { value: false },
+            uMouse:           { value: new THREE.Vector2(-999, -999) },
             uPalm:            { value: new THREE.Vector2(0, 0) }
         },
         vertexShader, fragmentShader,
@@ -540,11 +611,12 @@ function buildPoints(vertices, colors) {
 function syncUniforms() {
     if (!points) return;
     const u = points.material.uniforms;
-    u.uPhysics.value   = ['linear','vortex','accretion','gravity','drift','tesseract'].indexOf(physicsMode);
+    u.uPhysics.value   = ['linear','vortex','accretion','gravity','drift','tesseract','aizawa'].indexOf(physicsMode);
     u.uColorMode.value = ['untextured','textured','aurora','thermal'].indexOf(colorMode);
     u.uFlicker.value   = fx.flicker;
     u.uHolo.value      = fx.holo;
     u.uCurl.value      = fx.curl;
+    u.uRipple.value    = fx.ripple;
 }
 
 // ─── Holo flicker: cyberpunk hologram brightness ──────────────────────────────
@@ -826,7 +898,7 @@ window.setColorMode = function(mode) {
 
 window.setPhysics = function(mode) {
     physicsMode = mode;
-    ['linear','vortex','accretion','gravity','drift','tesseract'].forEach(m =>
+    ['linear','vortex','accretion','gravity','drift','tesseract','aizawa'].forEach(m =>
         document.getElementById('btn-' + m)?.classList.toggle('active', m === mode)
     );
     syncUniforms();
@@ -872,6 +944,11 @@ function animate() {
         u.uTime.value     = time;
         u.uProgress.value = Math.max(0, Math.min(1, currentProgress));
         u.uPalm.value.set(palmX, palmY);
+        // Smooth mouse tracking with lerp (lag = "fluid" feel for ripple)
+        if (fx.ripple) {
+            u.uMouse.value.x += (mouseWorld.x - u.uMouse.value.x) * 0.12;
+            u.uMouse.value.y += (mouseWorld.y - u.uMouse.value.y) * 0.12;
+        }
     }
 
     controls.update();
@@ -911,6 +988,21 @@ document.addEventListener('drop', e => {
         if (f.name.endsWith('.glb')) loadGLBFromFile(f);
         else if (f.type.startsWith('image/')) processImage(f);
     });
+});
+
+// ─── Mouse → world coords for ripple ─────────────────────────────────────────
+// Convert NDC mouse to approximate world-space XY at z=0 (the lotus plane).
+// The lotus is scale=4 and sits at origin, so world extents are roughly ±8.
+window.addEventListener('mousemove', (e) => {
+    // NDC: [-1, 1]
+    const ndcX =  (e.clientX / window.innerWidth)  * 2 - 1;
+    const ndcY = -(e.clientY / window.innerHeight) * 2 + 1;
+    // Unproject to world Z=0 plane via raycasting approach
+    const vec = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera);
+    const dir = vec.sub(camera.position).normalize();
+    const dist = -camera.position.z / dir.z;
+    const worldPos = camera.position.clone().add(dir.multiplyScalar(dist));
+    mouseWorld.set(worldPos.x, worldPos.y);
 });
 
 // ─── Resize ───────────────────────────────────────────────────────────────────
