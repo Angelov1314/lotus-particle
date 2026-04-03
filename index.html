@@ -43,16 +43,70 @@
             padding: 6px; cursor: pointer; border-radius: 3px; text-align: center;
         }
         .upload-btn:hover { border-color: #445; color: #99a; }
+
+        /* Fullscreen: fade out ALL UI, reveal on mouse move */
+        #ui-overlay {
+            transition: opacity 0.5s;
+        }
+        #ui-overlay.fs-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Music player bar */
+        #music-bar {
+            position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+            display: flex; align-items: center; gap: 10px;
+            background: rgba(0,0,0,0.6); border: 1px solid #1a1a2e;
+            border-radius: 20px; padding: 6px 14px; z-index: 10;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        #music-bar.visible { opacity: 1; pointer-events: auto; }
+        #music-bar button {
+            background: none; border: none; color: #00ffcc; cursor: pointer;
+            font-size: 16px; padding: 2px 4px; line-height: 1;
+        }
+        #music-bar button:hover { color: #fff; }
+        #music-vol {
+            -webkit-appearance: none; appearance: none;
+            width: 70px; height: 2px; background: #333;
+            border-radius: 2px; cursor: pointer; outline: none;
+        }
+        #music-vol::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 10px; height: 10px;
+            border-radius: 50%; background: #00ffcc; cursor: pointer;
+        }
+        #music-title {
+            color: #667; font-size: 10px; font-family: monospace;
+            max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
     </style>
 </head>
 <body>
 
-<video id="input_video" autoplay playsinline></video>
-<div id="status">initializing...</div>
 <div id="container"></div>
-<div id="drop-overlay">drop GLB here</div>
+<audio id="bgm" loop preload="auto"></audio>
 
-<div id="panel">
+<div id="ui-overlay">
+    <video id="input_video" autoplay playsinline></video>
+    <div id="status">initializing...</div>
+    <div id="drop-overlay">drop GLB here</div>
+
+    <!-- Music player bar -->
+    <div id="music-bar">
+        <button id="btn-play-pause" title="play/pause">▶</button>
+        <span id="music-title">Sakura Plains</span>
+        <input type="range" id="music-vol" min="0" max="1" step="0.01" value="0.5" title="volume">
+        <button id="btn-music-close" title="hide">✕</button>
+    </div>
+
+    <div id="panel">
+    <div class="panel-section">
+        <div class="btn-row">
+            <button class="btn" id="btn-fullscreen" onclick="toggleFullscreen()" title="fullscreen">⛶ fullscreen</button>
+            <button class="btn" id="btn-music" onclick="toggleMusicBar()" title="music">♪ music</button>
+        </div>
+    </div>
     <div class="panel-section">
         <div class="panel-label">color</div>
         <div class="btn-row">
@@ -101,6 +155,9 @@
             <button class="btn" id="btn-ripple" onclick="toggleFX('ripple')">ripple</button>
             <button class="btn" id="btn-erode" onclick="toggleFX('erode')">erode</button>
         </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-blueTears" onclick="toggleFX('blueTears')">蓝眼泪</button>
+        </div>
     </div>
 
     <div class="panel-section">
@@ -114,7 +171,8 @@
         </label>
         <button class="btn" id="btn-reset-swap" onclick="resetQueue()" style="display:none;margin-top:4px">↺ restart queue</button>
     </div>
-</div>
+    </div><!-- end #panel -->
+</div><!-- end #ui-overlay -->
 
 <script type="importmap">
 {
@@ -142,7 +200,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 let scene, camera, renderer, controls, points, composer, bloomPass;
 let cachedVertices = null, cachedGltf = null, cachedColors = null;
 let colorMode = 'untextured', physicsMode = 'linear';
-let fx = { flicker: false, holo: false, curl: false, spring: false, bloom: false, ripple: false, erode: false };
+let fx = { flicker: false, holo: false, curl: false, spring: false, bloom: false, ripple: false, erode: false, blueTears: false };
 let mouseWorld = new THREE.Vector2(-999, -999); // lerp target, starts off-screen
 let holoTime = 0; // tracks holo flicker phase
 
@@ -669,19 +727,19 @@ function buildPoints(vertices, colors) {
 
     const material = new THREE.ShaderMaterial({
         uniforms: {
-            uTime:            { value: 0 },
-            uProgress:        { value: 0 },
-            uPhysics:         { value: 0 },
-            uColorMode:       { value: 0 },
-            uFlicker:         { value: false },
-            uHolo:            { value: false },
-            uHoloBrightness:  { value: 1.0 },
-            uCurl:            { value: false },
-            uRipple:          { value: false },
-            uErode:           { value: false },
-            uErodePhase:      { value: 0.0 },
-            uMouse:           { value: new THREE.Vector2(-999, -999) },
-            uPalm:            { value: new THREE.Vector2(0, 0) }
+            uTime:               { value: 0 },
+            uProgress:           { value: 0 },
+            uPhysics:            { value: 0 },
+            uColorMode:          { value: 0 },
+            uFlicker:            { value: false },
+            uHolo:               { value: false },
+            uHoloBrightness:     { value: 1.0 },
+            uCurl:               { value: false },
+            uRipple:             { value: false },
+            uErode:              { value: false },
+            uErodePhase:         { value: 0.0 },
+            uMouse:              { value: new THREE.Vector2(-999, -999) },
+            uPalm:               { value: new THREE.Vector2(0, 0) }
         },
         vertexShader, fragmentShader,
         transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
@@ -995,6 +1053,10 @@ window.toggleFX = function(name) {
     fx[name] = !fx[name];
     document.getElementById('btn-' + name)?.classList.toggle('toggle-on', fx[name]);
     if (name === 'bloom') { bloomPass.enabled = fx.bloom; return; }
+    if (name === 'blueTears') {
+        if (btPoints) btPoints.visible = fx.blueTears;
+        return;
+    }
     syncUniforms();
 };
 
@@ -1007,6 +1069,191 @@ function updateProgress() {
     } else {
         currentProgress += (targetProgress - currentProgress) * 0.03;
     }
+}
+
+// ─── Blue Tears: independent GPU-driven particle system ──────────────────────
+// Separate THREE.Points with its own shaders. Particles spawn at mouse position
+// on mousemove, burst radially outward like bioluminescent fireworks with
+// elongated streaks (white core → cyan → deep blue).
+const BT_POOL = 15000;       // particle pool size
+const BT_PER_MOVE = 40;      // particles spawned per mousemove
+const BT_MAX_LIFE = 2.8;     // seconds each particle lives
+let btNextIdx = 0;            // ring-buffer write head
+let btPoints = null;          // THREE.Points
+let btLastMouse = null;       // last mouse world pos for velocity direction
+
+const btVertexShader = `
+    uniform float uTime;
+    attribute vec3 aSpawnPos;
+    attribute vec3 aVelocity;
+    attribute float aSpawnTime;
+    attribute float aSeed;
+
+    varying float vLife;
+    varying vec2 vVelDir;
+    varying float vCoreBright;
+
+    void main(){
+        float life = uTime - aSpawnTime;
+        float maxLife = ${BT_MAX_LIFE.toFixed(1)};
+
+        // Dead or not-yet-born particles: hide
+        if(life < 0.0 || life > maxLife || aSpawnTime < 0.5){
+            gl_PointSize = 0.0;
+            gl_Position = vec4(99999.0, 99999.0, 0.0, 1.0);
+            vLife = 1.0;
+            vVelDir = vec2(1.0, 0.0);
+            vCoreBright = 0.0;
+            return;
+        }
+
+        float t = life / maxLife; // 0-1 normalized life
+        // Exponential decay for natural deceleration
+        float decay = exp(-life * 1.5);
+        // Slight gravity pull
+        float gravity = -0.08 * life * life;
+        // Flutter: gentle sine wobble perpendicular to velocity
+        float flutter = sin(life * 4.0 + aSeed * 20.0) * 0.03 * (1.0 - t);
+
+        vec3 pos = aSpawnPos
+                 + aVelocity * life * decay
+                 + vec3(flutter, gravity + life * 0.06, flutter * 0.7);
+
+        vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
+
+        // Size: burst big then shrink. Speed boosts initial size.
+        float speed = length(aVelocity);
+        float baseSize = mix(28.0, 4.0, t * t) * (0.6 + speed * 0.15);
+        gl_PointSize = clamp(baseSize / -mvPos.z, 1.0, 120.0);
+        gl_Position = projectionMatrix * mvPos;
+
+        vLife = t;
+        vCoreBright = (1.0 - t) * (1.0 - t); // bright at start
+
+        // Screen-space velocity direction for streak elongation
+        vec3 velDir3 = normalize(aVelocity + vec3(0.001));
+        vec4 mvNext = modelViewMatrix * vec4(pos + velDir3 * 0.1, 1.0);
+        vec4 s1 = projectionMatrix * mvPos;
+        vec4 s2 = projectionMatrix * mvNext;
+        vec2 screenDir = (s2.xy / s2.w) - (s1.xy / s1.w);
+        float len = length(screenDir);
+        vVelDir = len > 0.0001 ? screenDir / len : vec2(1.0, 0.0);
+    }
+`;
+
+const btFragmentShader = `
+    varying float vLife;
+    varying vec2 vVelDir;
+    varying float vCoreBright;
+
+    void main(){
+        vec2 uv = gl_PointCoord - 0.5;
+
+        // Rotate UV to align with velocity direction for streak
+        float angle = atan(vVelDir.y, vVelDir.x);
+        float ca = cos(-angle), sa = sin(-angle);
+        vec2 rotUV = vec2(uv.x * ca - uv.y * sa, uv.x * sa + uv.y * ca);
+
+        // Elongated ellipse: stretch along velocity direction
+        float stretch = mix(3.5, 1.2, vLife); // fresh = very elongated
+        float d = length(vec2(rotUV.x / stretch, rotUV.y));
+
+        // Soft glow falloff
+        float glow = 0.015 / (d * d + 0.015);
+        glow *= (1.0 - vLife);          // fade over lifetime
+        glow = clamp(glow, 0.0, 1.0);
+
+        // Color: white core -> bright cyan -> deep blue -> fade
+        vec3 white = vec3(1.0, 1.0, 1.0);
+        vec3 cyan  = vec3(0.15, 0.65, 1.0);
+        vec3 blue  = vec3(0.03, 0.12, 0.45);
+
+        vec3 col;
+        if(vLife < 0.12) col = mix(white, cyan, vLife / 0.12);
+        else             col = mix(cyan, blue, (vLife - 0.12) / 0.88);
+
+        // Hot core highlight
+        float core = 0.004 / (d * d + 0.004);
+        col += white * core * vCoreBright * 0.6;
+
+        // Outer faint halo
+        float halo = 0.06 / (d + 0.06);
+        col += cyan * halo * 0.08 * (1.0 - vLife);
+
+        float alpha = glow;
+        if(alpha < 0.001) discard;
+        gl_FragColor = vec4(col * glow, alpha);
+    }
+`;
+
+function initBlueTears(){
+    const spawnPos  = new Float32Array(BT_POOL * 3);
+    const velocity  = new Float32Array(BT_POOL * 3);
+    const spawnTime = new Float32Array(BT_POOL);
+    const seed      = new Float32Array(BT_POOL);
+
+    for(let i = 0; i < BT_POOL; i++){
+        spawnTime[i] = 0.0;
+        seed[i] = Math.random();
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position',   new THREE.BufferAttribute(new Float32Array(BT_POOL * 3), 3));
+    geo.setAttribute('aSpawnPos',  new THREE.BufferAttribute(spawnPos, 3));
+    geo.setAttribute('aVelocity',  new THREE.BufferAttribute(velocity, 3));
+    geo.setAttribute('aSpawnTime', new THREE.BufferAttribute(spawnTime, 1));
+    geo.setAttribute('aSeed',      new THREE.BufferAttribute(seed, 1));
+
+    const mat = new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 } },
+        vertexShader:   btVertexShader,
+        fragmentShader: btFragmentShader,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+
+    btPoints = new THREE.Points(geo, mat);
+    btPoints.frustumCulled = false;
+    btPoints.visible = false;
+    scene.add(btPoints);
+}
+initBlueTears();
+
+// Emit particles at a world position with mouse velocity
+function btEmit(worldX, worldY, mouseDirX, mouseDirY){
+    if(!btPoints || !fx.blueTears) return;
+    const time = performance.now() * 0.001;
+    const geo = btPoints.geometry;
+    const posArr  = geo.attributes.aSpawnPos.array;
+    const velArr  = geo.attributes.aVelocity.array;
+    const timeArr = geo.attributes.aSpawnTime.array;
+
+    const mouseSpeed = Math.sqrt(mouseDirX * mouseDirX + mouseDirY * mouseDirY);
+    const energy = Math.min(mouseSpeed * 0.8 + 0.3, 3.0);
+
+    for(let n = 0; n < BT_PER_MOVE; n++){
+        const i = btNextIdx;
+        btNextIdx = (btNextIdx + 1) % BT_POOL;
+        const i3 = i * 3;
+
+        posArr[i3]     = worldX + (Math.random() - 0.5) * 0.15;
+        posArr[i3 + 1] = worldY + (Math.random() - 0.5) * 0.15;
+        posArr[i3 + 2] = (Math.random() - 0.5) * 0.1;
+
+        const angle = Math.random() * Math.PI * 2;
+        const speed = (0.8 + Math.random() * 2.5) * energy;
+        const biasFactor = 0.35;
+        velArr[i3]     = Math.cos(angle) * speed + mouseDirX * biasFactor;
+        velArr[i3 + 1] = Math.sin(angle) * speed + mouseDirY * biasFactor;
+        velArr[i3 + 2] = (Math.random() - 0.5) * speed * 0.3;
+
+        timeArr[i] = time + Math.random() * 0.05;
+    }
+
+    geo.attributes.aSpawnPos.needsUpdate  = true;
+    geo.attributes.aVelocity.needsUpdate  = true;
+    geo.attributes.aSpawnTime.needsUpdate = true;
 }
 
 // ─── Animation loop ───────────────────────────────────────────────────────────
@@ -1030,12 +1277,12 @@ function animate() {
         const u = points.material.uniforms;
         u.uTime.value     = time;
         u.uProgress.value = Math.max(0, Math.min(1, currentProgress));
-        // Erode cycle: 20s erode, 2s hold, 20s reassemble, 3s pause → repeat
+        // Erode cycle: 3s erode, 1s hold, 20s reassemble, 3s pause → repeat
         if (fx.erode) {
-            const cycleDur = 45.0; // 20 + 2 + 20 + 3
+            const cycleDur = 27.0; // 3 + 1 + 20 + 3
             const cycleT = (time % cycleDur) / cycleDur;
-            // Breakpoints: erode=20/45, hold=22/45, reassemble=42/45, pause=45/45
-            const E = 20/45, H = 22/45, R = 42/45;
+            // Breakpoints: erode=3/27, hold=4/27, reassemble=24/27, pause=27/27
+            const E = 3/27, H = 4/27, R = 24/27;
             let phase;
             if (cycleT < E)      phase = (cycleT / E) * 0.55;
             else if (cycleT < H) phase = 0.55 + (cycleT - E) / (H - E) * 0.15;
@@ -1057,6 +1304,12 @@ function animate() {
             u.uMouse.value.x += dx * rate;
             u.uMouse.value.y += dy * rate;
         }
+
+    }
+
+    // Blue tears: update time uniform
+    if (btPoints && fx.blueTears) {
+        btPoints.material.uniforms.uTime.value = time;
     }
 
     controls.update();
@@ -1098,6 +1351,97 @@ document.addEventListener('drop', e => {
     });
 });
 
+// ─── Fullscreen ───────────────────────────────────────────────────────────────
+const uiOverlay = document.getElementById('ui-overlay');
+let fsHideTimer = null;
+
+function showUI() {
+    uiOverlay.classList.remove('fs-hidden');
+    clearTimeout(fsHideTimer);
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+        fsHideTimer = setTimeout(() => uiOverlay.classList.add('fs-hidden'), 2500);
+    }
+}
+
+document.addEventListener('mousemove', showUI);
+document.addEventListener('touchstart', showUI);
+
+window.toggleFullscreen = function() {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        const el = document.documentElement;
+        (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    } else {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
+};
+
+document.addEventListener('fullscreenchange', () => {
+    const isFs = !!document.fullscreenElement;
+    const btn = document.getElementById('btn-fullscreen');
+    btn.textContent = isFs ? '✕ exit full' : '⛶ fullscreen';
+    btn.classList.toggle('toggle-on', isFs);
+    if (!isFs) {
+        clearTimeout(fsHideTimer);
+        uiOverlay.classList.remove('fs-hidden');
+    } else {
+        // Start hide timer when entering fullscreen
+        fsHideTimer = setTimeout(() => uiOverlay.classList.add('fs-hidden'), 2500);
+    }
+});
+
+// ─── Background music ─────────────────────────────────────────────────────────
+const bgm = document.getElementById('bgm');
+bgm.volume = 0.5;
+
+// Try multiple paths for local dev vs GitHub Pages
+const tryPaths = ['Sakura_Plains.mp3', './Sakura_Plains.mp3'];
+let pathIdx = 0;
+function loadNextAudioPath() {
+    if (pathIdx >= tryPaths.length) return;
+    bgm.src = tryPaths[pathIdx++];
+    bgm.load();
+}
+bgm.addEventListener('error', loadNextAudioPath);
+loadNextAudioPath();
+
+const musicBar  = document.getElementById('music-bar');
+const btnPP     = document.getElementById('btn-play-pause');
+const musicVol  = document.getElementById('music-vol');
+let musicBarOpen = false;
+
+window.toggleMusicBar = function() {
+    musicBarOpen = !musicBarOpen;
+    musicBar.classList.toggle('visible', musicBarOpen);
+    document.getElementById('btn-music').classList.toggle('toggle-on', musicBarOpen);
+    if (musicBarOpen && bgm.paused) {
+        bgm.play().then(() => { btnPP.textContent = '⏸'; }).catch(() => {
+            // If blocked, wait for next user gesture
+            btnPP.textContent = '▶';
+        });
+    }
+};
+
+btnPP.addEventListener('click', () => {
+    if (bgm.paused) {
+        bgm.play().then(() => { btnPP.textContent = '⏸'; }).catch(() => {});
+    } else {
+        bgm.pause();
+        btnPP.textContent = '▶';
+    }
+});
+
+// Keep button icon in sync
+bgm.addEventListener('play',  () => { btnPP.textContent = '⏸'; });
+bgm.addEventListener('pause', () => { btnPP.textContent = '▶'; });
+
+musicVol.addEventListener('input', () => { bgm.volume = parseFloat(musicVol.value); });
+
+document.getElementById('btn-music-close').addEventListener('click', () => {
+    musicBarOpen = false;
+    musicBar.classList.remove('visible');
+    document.getElementById('btn-music').classList.remove('toggle-on');
+});
+
 // ─── Mouse → world coords for ripple ─────────────────────────────────────────
 // Convert NDC mouse to approximate world-space XY at z=0 (the lotus plane).
 // The lotus is scale=4 and sits at origin, so world extents are roughly ±8.
@@ -1111,7 +1455,19 @@ window.addEventListener('mousemove', (e) => {
     const dist = -camera.position.z / dir.z;
     const worldPos = camera.position.clone().add(dir.multiplyScalar(dist));
     mouseWorld.set(worldPos.x, worldPos.y);
+
+    // Blue tears: emit particles along mouse trail
+    if (fx.blueTears) {
+        let dx = 0, dy = 0;
+        if (btLastMouse) {
+            dx = worldPos.x - btLastMouse.x;
+            dy = worldPos.y - btLastMouse.y;
+        }
+        btEmit(worldPos.x, worldPos.y, dx * 8, dy * 8);
+        btLastMouse = { x: worldPos.x, y: worldPos.y };
+    }
 });
+
 
 // ─── Resize ───────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
