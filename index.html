@@ -431,15 +431,37 @@ const vertexShader = `
             // Smooth transition zone at the erosion edge
             float edge = smoothstep(threshold - 0.12, threshold + 0.05, n);
             erodeAlpha = edge;
-            // Eroded particles: drift away like windblown dust
-            if(erodeAlpha < 0.5){
-                float drift = (1.0 - erodeAlpha * 2.0); // 0→1 as more eroded
-                // Wind direction: mostly +X with some upward
-                pos.x += drift * 0.8 * (0.5 + aOffset);
-                pos.y += drift * 0.3 * sin(uTime * 0.7 + aOffset * 4.0);
-                pos.z += drift * 0.2 * cos(uTime * 0.5 + aOffset * 3.0);
-                // Shrink eroded particles
-                erodeAlpha = max(erodeAlpha, 0.02); // keep a tiny speck visible
+
+            // ── Edge particles: peel off and stream away ─────────────────────
+            // Particles near the erosion boundary (0.1 < alpha < 0.6) are the
+            // "crumbling edge". They stay visible and fly outward like debris.
+            // Deeper eroded particles (alpha < 0.1) vanish completely.
+            if(erodeAlpha < 0.6){
+                // How far into the eroded zone: 0=edge, 1=deep
+                float depth = 1.0 - clamp(erodeAlpha / 0.6, 0.0, 1.0);
+                // Each particle gets a staggered launch time based on its hash
+                float launchTime = fract(sin(aOffset * 317.5) * 9471.3) * 4.0;
+                float flyTime = max(0.0, mod(uTime * 0.4, 5.0) - launchTime);
+                flyTime = min(flyTime, 3.0); // cap flight duration
+                float flyProgress = flyTime / 3.0; // 0→1 over 3 seconds
+
+                // Only edge particles (depth < 0.7) actually fly; deep ones vanish
+                if(depth < 0.7){
+                    // Wind direction: outward from model center + rightward breeze
+                    vec3 outDir = normalize(position + vec3(0.001));
+                    vec3 wind = vec3(0.6, 0.3, 0.0); // gentle breeze
+                    vec3 flyDir = normalize(outDir * 0.5 + wind);
+                    // Accelerate outward over flight time
+                    pos += flyDir * flyProgress * flyProgress * 3.0 * (0.5 + depth);
+                    // Tumble: slight random wobble during flight
+                    pos.x += sin(uTime * 2.0 + aOffset * 8.0) * flyProgress * 0.15;
+                    pos.y += cos(uTime * 1.7 + aOffset * 6.0) * flyProgress * 0.1;
+                    // Stay visible during flight, fade at end
+                    erodeAlpha = 0.3 + 0.7 * (1.0 - flyProgress * flyProgress);
+                } else {
+                    // Deep eroded: invisible
+                    erodeAlpha = 0.0;
+                }
             }
         }
 
