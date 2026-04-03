@@ -369,6 +369,11 @@ camera.position.set(0, 1, 5);
 renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// Correct colour pipeline: prevents sRGB→linear double-conversion that causes
+// pinks to shift orange/yellow under bloom and additive lighting
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
 document.getElementById('container').appendChild(renderer.domElement);
 
 controls = new OrbitControls(camera, renderer.domElement);
