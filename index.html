@@ -343,12 +343,20 @@ const fragmentShader = `
     varying float vOpacity;
     varying float vBrightBoost;
     varying float vHoloBrightness;
+    uniform int uColorMode;
 
     void main(){
         float d = distance(gl_PointCoord, vec2(0.5));
-        float strength = 0.05 / d - 0.1;
-        strength = clamp(strength, 0.0, 1.0);
-        float finalBright = vBrightBoost * vHoloBrightness;
+        float strength;
+        if (uColorMode == 1) {
+            // Texture mode (NormalBlending): use a crisp soft-circle so individual
+            // particles are clearly visible and colour is not diluted by near-zero alpha.
+            strength = smoothstep(0.5, 0.18, d);
+        } else {
+            // Additive glow mode: classic 1/d falloff
+            strength = clamp(0.05 / d - 0.1, 0.0, 1.0);
+        }
+        float finalBright = (uColorMode == 1) ? vHoloBrightness : vBrightBoost * vHoloBrightness;
         gl_FragColor = vec4(vColor * finalBright, strength * vOpacity * vHoloBrightness);
     }
 `;
@@ -374,17 +382,27 @@ composer.addPass(bloomPass);
 bloomPass.enabled = false;
 
 // ─── Texture sampler ─────────────────────────────────────────────────────────
+// Reads the full image ONCE into a flat array, then does O(1) lookups per UV.
+// Applies sRGB→linear conversion (pow 2.2) so colors match the original GLB
+// appearance instead of looking washed-out / hue-shifted under additive lighting.
 function buildTextureSampler(texture) {
     const img = texture.image;
+    const w = img.width, h = img.height;
     const canvas = document.createElement('canvas');
-    canvas.width = img.width; canvas.height = img.height;
-    canvas.getContext('2d').drawImage(img, 0, 0);
+    canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, w, h).data; // read entire image once
     return (u, v) => {
-        const x = Math.floor(((u%1)+1)%1 * img.width);
-        const y = Math.floor((1-((v%1)+1)%1) * img.height);
-        const p = ctx.getImageData(x, y, 1, 1).data;
-        return [p[0]/255, p[1]/255, p[2]/255];
+        const x = Math.min(w - 1, Math.floor(((u % 1) + 1) % 1 * w));
+        const y = Math.min(h - 1, Math.floor((1 - ((v % 1) + 1) % 1) * h));
+        const i = (y * w + x) * 4;
+        // sRGB → linear (gamma 2.2) so Three.js linear pipeline gets correct values
+        return [
+            Math.pow(data[i]     / 255, 2.2),
+            Math.pow(data[i + 1] / 255, 2.2),
+            Math.pow(data[i + 2] / 255, 2.2)
+        ];
     };
 }
 
@@ -459,7 +477,12 @@ function buildPoints(vertices, colors) {
             uPalm:            { value: new THREE.Vector2(0, 0) }
         },
         vertexShader, fragmentShader,
-        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+        transparent: true,
+        // Texture mode uses NormalBlending to prevent additive color wash-out
+        // (dense pink particles would otherwise saturate into yellow at the stamen).
+        // All other modes keep AdditiveBlending for the glowing particle look.
+        blending: colorMode === 'textured' ? THREE.NormalBlending : THREE.AdditiveBlending,
+        depthWrite: false
     });
 
     points = new THREE.Points(geometry, material);
@@ -678,13 +701,29 @@ function processImage(file) {
                 const a = imageData[idx + 3] / 255;
 
                 // Perceived brightness (luminance)
-                const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-                if (brightness < IMAGE_BRIGHTNESS_THRESHOLD || a < 0.1) continue;
+                const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if (luma < IMAGE_BRIGHTNESS_THRESHOLD || a < 0.1) continue;
 
                 // Center the grid: x in [-1, +1], y in [-1, +1] (flip row)
                 const x = (col + 0.5) * scaleX - 1.0;
                 const y = 1.0 - (row + 0.5) * scaleY;
-                const z = (Math.random() - 0.5) * 0.1; // slight Z depth ±0.05
+
+                // Map luminance to Z depth — multi-layer bucketing for sculpted-relief look.
+                // Bright highlights sit closest to the viewer; dark areas recede.
+                // Each bucket gets a small random jitter so layers blend naturally
+                // rather than appearing as hard planes.
+                let zBase, zRange;
+                if (luma > 0.75) {
+                    zBase = 0.8;  zRange = 0.4;   // +0.8 … +1.2  (closest)
+                } else if (luma > 0.5) {
+                    zBase = 0.3;  zRange = 0.3;   // +0.3 … +0.6
+                } else if (luma > 0.25) {
+                    zBase = -0.1; zRange = 0.3;   // -0.1 … +0.2
+                } else {
+                    zBase = -0.4; zRange = 0.3;   // -0.4 … -0.1  (darkest, furthest)
+                }
+                // Deterministic bucket offset + small random jitter (±0.08)
+                const z = zBase + Math.random() * zRange + (Math.random() - 0.5) * 0.16;
 
                 vertices.push(x, y, z);
                 colors.push(r, g, b);
@@ -704,6 +743,10 @@ function processImage(file) {
 
         if (glbQueue.length === 1) {
             activateQueueIndex(0);
+            // Gently tilt camera to hint at the Z-depth stratification
+            camera.position.set(0.8, 1.2, 5.5);
+            controls.target.set(0, 0, 0);
+            controls.update();
         } else {
             STATUS.textContent = `queued: ${name} (${glbQueue.length}/${MAX_QUEUE}) — ${vertices.length / 3 | 0} particles`;
         }
