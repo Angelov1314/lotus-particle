@@ -386,27 +386,29 @@ const vertexShader = `
             pos += cn;
         }
 
-        // ── Mouse ripple ─────────────────────────────────────────────────────
-        // Wave rings propagate outward from cursor. Formula:
-        //   displacement = sin(k*d - ω*t) * exp(-d²*falloff)
-        // Applied as Z-wobble + radial XY push for a water-surface feel.
-        // Also boosts vBrightBoost at the bright ring crests.
+        // ── Mouse repulsion field ────────────────────────────────────────────
+        // Particles near the cursor are pushed radially outward, creating a
+        // "hole" that follows the mouse. The slow lerp on uMouse (JS side)
+        // means when the cursor moves away, the repulsion zone slides off
+        // gradually → particles drift back to rest over ~1 second.
         if(uRipple){
             vec2 worldXY = (modelMatrix * vec4(pos, 1.0)).xy;
             float d = distance(worldXY, uMouse);
-            // Outward ring wave: k=12 (tighter rings), ω=6 (speed)
-            float wave = sin(d * 12.0 - uTime * 6.0);
-            // Gaussian envelope: steeper falloff (2.0) → affects ~0.7 world units
-            float env  = exp(-d * d * 2.0);
-            float disp = wave * env;
-            // Z push (depth ripple) — reduced from 0.35 to 0.15
-            pos.z += disp * 0.15;
-            // Radial XY push — reduced from 0.08 to 0.03
+            // Repulsion radius in world units
+            float radius = 2.5;
+            // Smooth falloff: 1.0 at cursor center, 0.0 at edge
+            float strength = smoothstep(radius, 0.0, d);
+            // Cubic ease for punchier core push
+            strength = strength * strength;
             if(d > 0.001){
-                pos.xy += normalize(worldXY - uMouse) * disp * 0.03;
+                vec2 pushDir = normalize(worldXY - uMouse);
+                // Push particles outward — up to 2.0 units at dead center
+                pos.xy += pushDir * strength * 2.0;
             }
-            // Subtle highlight at ring crests
-            vBrightBoost *= 1.0 + max(0.0, wave) * env * 0.4;
+            // Slight Z warp at the edge — gives a "lens distortion" feel
+            pos.z += strength * 0.4 * sin(d * 5.0 + uTime * 2.0);
+            // Particles near cursor glow brighter (energy feel)
+            vBrightBoost *= 1.0 + strength * 0.6;
         }
 
         // ── Flicker: jitter position slightly ────────────────────────────────
@@ -959,10 +961,16 @@ function animate() {
         u.uTime.value     = time;
         u.uProgress.value = Math.max(0, Math.min(1, currentProgress));
         u.uPalm.value.set(palmX, palmY);
-        // Smooth mouse tracking with lerp (lag = "fluid" feel for ripple)
+        // Mouse tracking: fast follow (0.15) when mouse moves toward model,
+        // slow recovery (0.03) when mouse moves away → repulsion lingers
         if (fx.ripple) {
-            u.uMouse.value.x += (mouseWorld.x - u.uMouse.value.x) * 0.12;
-            u.uMouse.value.y += (mouseWorld.y - u.uMouse.value.y) * 0.12;
+            const dx = mouseWorld.x - u.uMouse.value.x;
+            const dy = mouseWorld.y - u.uMouse.value.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            // Fast approach, slow release
+            const rate = dist > 0.5 ? 0.15 : 0.03;
+            u.uMouse.value.x += dx * rate;
+            u.uMouse.value.y += dy * rate;
         }
     }
 
