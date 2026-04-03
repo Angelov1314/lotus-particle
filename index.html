@@ -4,252 +4,860 @@
     <meta charset="UTF-8">
     <title>Three.js 粒子手势控制 - 莲花</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #000; overflow: hidden; font-family: monospace; }
         #container { width: 100vw; height: 100vh; }
-        /* 隐藏摄像头画面，但保持 MediaPipe 运行 */
-        #input_video { position: fixed; top: 10px; left: 10px; width: 240px; height: 180px; transform: scaleX(-1); border-radius: 8px; border: 2px solid #555; z-index: 10; }
-        #status { position: fixed; bottom: 20px; left: 20px; color: #00ffcc; z-index: 10; font-size: 14px; text-shadow: 0 0 5px #000; }
+        #input_video { position: fixed; top: 10px; left: 10px; width: 180px; height: 135px; transform: scaleX(-1); border-radius: 6px; border: 1px solid #333; z-index: 10; opacity: 0.7; }
+        #status { position: fixed; bottom: 16px; left: 16px; color: #00ffcc; z-index: 10; font-size: 12px; text-shadow: 0 0 8px #00ffcc44; }
+        #drop-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,255,200,0.06); border: 2px dashed #00ffcc;
+            z-index: 20; align-items: center; justify-content: center;
+            font-size: 20px; color: #00ffcc; pointer-events: none;
+        }
+        #drop-overlay.active { display: flex; }
+
+        /* Side panel */
+        #panel {
+            position: fixed; top: 0; right: 0; bottom: 0; width: 200px;
+            background: rgba(0,0,0,0.75); border-left: 1px solid #1a1a2e;
+            z-index: 10; padding: 12px 10px; overflow-y: auto;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+        .panel-section { display: flex; flex-direction: column; gap: 6px; }
+        .panel-label { color: #555; font-size: 10px; letter-spacing: 2px; text-transform: uppercase; padding-bottom: 2px; border-bottom: 1px solid #1a1a2e; }
+        .btn-row { display: flex; gap: 5px; flex-wrap: wrap; }
+        .btn {
+            flex: 1; min-width: 55px;
+            background: rgba(255,255,255,0.04); border: 1px solid #2a2a3e;
+            color: #667; font-family: monospace; font-size: 10px;
+            padding: 5px 4px; cursor: pointer; border-radius: 3px;
+            transition: all 0.15s; text-align: center;
+        }
+        .btn:hover { border-color: #445; color: #99a; }
+        .btn.active { border-color: #00ffcc88; color: #00ffcc; background: rgba(0,255,200,0.07); }
+        .btn.toggle-on { border-color: #88aaff88; color: #88aaff; background: rgba(100,130,255,0.07); }
+        .upload-btn {
+            width: 100%; background: rgba(255,255,255,0.04); border: 1px solid #2a2a3e;
+            color: #667; font-family: monospace; font-size: 10px;
+            padding: 6px; cursor: pointer; border-radius: 3px; text-align: center;
+        }
+        .upload-btn:hover { border-color: #445; color: #99a; }
     </style>
 </head>
 <body>
 
-    <video id="input_video" autoplay playsinline></video>
-    <div id="status">正在初始化摄像头和模型...</div>
-    <div id="container"></div>
+<video id="input_video" autoplay playsinline></video>
+<div id="status">initializing...</div>
+<div id="container"></div>
+<div id="drop-overlay">drop GLB here</div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+<div id="panel">
+    <div class="panel-section">
+        <div class="panel-label">color</div>
+        <div class="btn-row">
+            <button class="btn active" id="btn-untextured" onclick="setColorMode('untextured')">cyan</button>
+            <button class="btn" id="btn-textured" onclick="setColorMode('textured')">texture</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-aurora" onclick="setColorMode('aurora')">aurora</button>
+            <button class="btn" id="btn-thermal" onclick="setColorMode('thermal')">thermal</button>
+        </div>
+    </div>
+
+    <div class="panel-section">
+        <div class="panel-label">physics</div>
+        <div class="btn-row">
+            <button class="btn active" id="btn-linear" onclick="setPhysics('linear')">linear</button>
+            <button class="btn" id="btn-vortex" onclick="setPhysics('vortex')">vortex</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-accretion" onclick="setPhysics('accretion')">accretion</button>
+            <button class="btn" id="btn-gravity" onclick="setPhysics('gravity')">gravity</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-drift" onclick="setPhysics('drift')">↑ drift</button>
+        </div>
+    </div>
+
+    <div class="panel-section">
+        <div class="panel-label">fx</div>
+        <div class="btn-row">
+            <button class="btn" id="btn-flicker" onclick="toggleFX('flicker')">flicker</button>
+            <button class="btn" id="btn-holo" onclick="toggleFX('holo')">holo</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-curl" onclick="toggleFX('curl')">curl</button>
+        </div>
+        <div class="btn-row">
+            <button class="btn" id="btn-spring" onclick="toggleFX('spring')">spring</button>
+            <button class="btn" id="btn-bloom" onclick="toggleFX('bloom')">bloom</button>
+        </div>
+    </div>
+
+    <div class="panel-section">
+        <div class="panel-label">model queue (up to 10)</div>
+        <div id="glb-queue-list"></div>
+        <label class="upload-btn" id="label-add-glb">+ add GLB
+            <input type="file" accept=".glb" style="display:none" id="file-input-add" multiple>
+        </label>
+        <label class="upload-btn" id="label-add-image">+ add image
+            <input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" id="file-input-image" multiple>
+        </label>
+        <button class="btn" id="btn-reset-swap" onclick="resetQueue()" style="display:none;margin-top:4px">↺ restart queue</button>
+    </div>
+</div>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// load MediaPipe
+['https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js',
+ 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js'
+].forEach(src => { const s = document.createElement('script'); s.src = src; document.head.appendChild(s); });
+
+// ─── State ───────────────────────────────────────────────────────────────────
+let scene, camera, renderer, controls, points, composer, bloomPass;
+let cachedVertices = null, cachedGltf = null, cachedColors = null;
+let colorMode = 'untextured', physicsMode = 'linear';
+let fx = { flicker: false, holo: false, curl: false, spring: false, bloom: false };
+let holoTime = 0; // tracks holo flicker phase
+
+let targetProgress = 0, currentProgress = 0, velocity = 0;
+let palmX = 0, palmY = 0;
+let hasSwapped = false;
+
+const STATUS = document.getElementById('status');
+
+// ─── Shaders ─────────────────────────────────────────────────────────────────
+const vertexShader = `
+    uniform float uTime;
+    uniform float uProgress;
+    uniform int uPhysics;     // 0=linear, 1=vortex, 2=accretion, 3=gravity, 4=drift
+    uniform int uColorMode;   // 0=cyan, 1=texture, 2=aurora, 3=thermal
+    uniform bool uFlicker;
+    uniform bool uHolo;
+    uniform bool uCurl;
+    uniform vec2 uPalm;
+    uniform float uHoloBrightness;
+
+    attribute vec3 aRandom;
+    attribute float aOffset;
+    attribute vec3 aColor;
+
+    varying vec3 vColor;
+    varying float vOpacity;
+    varying float vBrightBoost;
+    varying vec3 vWorldPos;
+    varying float vHoloBrightness;
+
+    // ── Simplex 3D noise ─────────────────────────────────────────────────────
+    vec3 mod289v3(vec3 x) { return x - floor(x*(1./289.))*289.; }
+    vec4 mod289v4(vec4 x) { return x - floor(x*(1./289.))*289.; }
+    vec4 permute(vec4 x){ return mod289v4(((x*34.)+1.)*x); }
+    vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159-0.85373472095314*r; }
+    float snoise(vec3 v){
+        const vec2 C=vec2(1./6.,1./3.);
+        const vec4 D=vec4(0.,0.5,1.,2.);
+        vec3 i=floor(v+dot(v,C.yyy));
+        vec3 x0=v-i+dot(i,C.xxx);
+        vec3 g=step(x0.yzx,x0.xyz);
+        vec3 l=1.-g;
+        vec3 i1=min(g.xyz,l.zxy);
+        vec3 i2=max(g.xyz,l.zxy);
+        vec3 x1=x0-i1+C.xxx;
+        vec3 x2=x0-i2+C.yyy;
+        vec3 x3=x0-D.yyy;
+        i=mod289v3(i);
+        vec4 p=permute(permute(permute(
+            i.z+vec4(0.,i1.z,i2.z,1.))
+           +i.y+vec4(0.,i1.y,i2.y,1.))
+           +i.x+vec4(0.,i1.x,i2.x,1.));
+        float n_=.142857142857;
+        vec3 ns=n_*D.wyz-D.xzx;
+        vec4 j=p-49.*floor(p*ns.z*ns.z);
+        vec4 x_=floor(j*ns.z);
+        vec4 y_=floor(j-7.*x_);
+        vec4 x=x_*ns.x+ns.yyyy;
+        vec4 y=y_*ns.x+ns.yyyy;
+        vec4 h=1.-abs(x)-abs(y);
+        vec4 b0=vec4(x.xy,y.xy);
+        vec4 b1=vec4(x.zw,y.zw);
+        vec4 s0=floor(b0)*2.+1.;
+        vec4 s1=floor(b1)*2.+1.;
+        vec4 sh=-step(h,vec4(0.));
+        vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
+        vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+        vec3 p0=vec3(a0.xy,h.x);
+        vec3 p1=vec3(a0.zw,h.y);
+        vec3 p2=vec3(a1.xy,h.z);
+        vec3 p3=vec3(a1.zw,h.w);
+        vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+        p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+        vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
+        m=m*m;
+        return 42.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+    }
+
+    vec3 curlNoise(vec3 p){
+        float e=0.02;
+        float n1,n2;
+        vec3 curl;
+        n1=snoise(p+vec3(0,e,0)); n2=snoise(p-vec3(0,e,0)); curl.x=(n1-n2)/(2.*e);
+        n1=snoise(p+vec3(0,0,e)); n2=snoise(p-vec3(0,0,e)); curl.y=(n1-n2)/(2.*e);
+        n1=snoise(p+vec3(e,0,0)); n2=snoise(p-vec3(e,0,0)); curl.z=(n1-n2)/(2.*e);
+        return curl;
+    }
+
+    vec3 rotateY(vec3 v,float a){
+        float s=sin(a),c=cos(a);
+        return vec3(v.x*c+v.z*s,v.y,-v.x*s+v.z*c);
+    }
+
+    vec3 hsv2rgb(vec3 c){
+        vec4 K=vec4(1.,2./3.,1./3.,3.);
+        vec3 p=abs(fract(c.xxx+K.xyz)*6.-K.www);
+        return c.z*mix(K.xxx,clamp(p-K.xxx,0.,1.),c.y);
+    }
+
+    void main(){
+        vec3 pos = position;
+
+        // ── Physics ───────────────────────────────────────────────────────────
+        if(uPhysics == 1){
+            // Vortex: spiral inward on fist
+            float angle = uProgress * 5.0 * (1.0 - length(pos.xz) * 0.5);
+            pos = rotateY(pos, angle);
+            pos += aRandom * uProgress * 2.5;
+
+        } else if(uPhysics == 2){
+            // Accretion disk: flatten + Keplerian orbit when closed
+            float flatten = mix(1.0, 0.05, 1.0 - uProgress);
+            pos.y *= flatten;
+            float radius = length(pos.xz);
+            float orbitalSpeed = (1.0 - uProgress) * 3.0 / max(radius, 0.1);
+            float angle = uTime * orbitalSpeed;
+            float s = sin(angle), c = cos(angle);
+            vec2 rot = vec2(pos.x*c - pos.z*s, pos.x*s + pos.z*c);
+            pos.x = rot.x; pos.z = rot.y;
+            pos += aRandom * uProgress * 2.5;
+
+        } else if(uPhysics == 3){
+            // Gravity well: palm attracts/repels
+            vec3 attractor = vec3(uPalm.x, uPalm.y, 0.0);
+            vec3 dir = attractor - pos;
+            float dist = max(length(dir), 0.5);
+            float force = (uProgress > 0.5 ? -4.0 : 4.0) / (dist * dist);
+            pos += normalize(dir) * force * 0.08;
+            pos += aRandom * uProgress * 2.5;
+
+        } else if(uPhysics == 4){
+            // Drift: gentle upward micro-gravity — particles float upward slowly
+            // drift strength varies per particle via aOffset, more scattered = more drift
+            float driftSpeed = 0.3 + aOffset * 0.4;
+            pos.y += sin(uTime * driftSpeed + aOffset * 6.28) * 0.15 * (1.0 - uProgress * 0.5);
+            pos.y += uTime * 0.012 * (1.0 - uProgress * 0.6); // steady upward creep
+            // wrap: reset particles that drift too high (mod in worldspace)
+            pos.y = mod(pos.y + 2.0, 4.0) - 2.0;
+            pos += aRandom * uProgress * 2.5;
+
+        } else {
+            // Linear
+            pos += aRandom * uProgress * 2.5;
+        }
+
+        // ── Curl noise overlay ────────────────────────────────────────────────
+        if(uCurl){
+            vec3 cn = curlNoise(pos * 1.5 + uTime * 0.15) * uProgress * 1.2;
+            pos += cn;
+        }
+
+        // ── Flicker: jitter position slightly ────────────────────────────────
+        float flickerPhase = fract(sin(aOffset * 127.1 + uTime * 0.4) * 43758.5453);
+        float flickerOn = step(0.92, flickerPhase);
+        if(uFlicker){
+            pos += aRandom * flickerOn * 0.02;
+        }
+
+        // ── Base float ───────────────────────────────────────────────────────
+        pos.y += sin(uTime * 0.5 + aOffset) * 0.02;
+
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        float baseSize = uFlicker ? (15.0 + flickerOn * 6.0) : 15.0;
+        gl_PointSize = baseSize / -mvPosition.z;
+        gl_Position = projectionMatrix * mvPosition;
+
+        vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
+        vOpacity = 1.0 - uProgress * 0.8;
+        vBrightBoost = uFlicker ? (0.6 + flickerOn * 0.4) : 1.0;
+        vHoloBrightness = uHolo ? uHoloBrightness : 1.0;
+
+        // ── Color modes ───────────────────────────────────────────────────────
+        float temperature = 1.0 - clamp(length(position.xz) * 0.5, 0.0, 1.0);
+
+        if(uColorMode == 2){
+            // Aurora: hue shifts along world Y + time
+            float hue = fract(vWorldPos.y * 0.25 + uTime * 0.04);
+            float band = sin(vWorldPos.y * 5.0 - uTime * 1.5) * 0.5 + 0.5;
+            vColor = hsv2rgb(vec3(hue, 0.75, 0.8 + band * 0.2));
+
+        } else if(uColorMode == 3){
+            // Thermal: cold blue → warm orange by distance from center
+            vec3 cold = vec3(0.1, 0.2, 0.9);
+            vec3 cool = vec3(0.2, 0.8, 1.0);
+            vec3 warm = vec3(1.0, 0.9, 0.5);
+            vec3 hot  = vec3(1.0, 0.35, 0.05);
+            if(temperature < 0.33)      vColor = mix(cold, cool, temperature/0.33);
+            else if(temperature < 0.66) vColor = mix(cool, warm, (temperature-0.33)/0.33);
+            else                        vColor = mix(warm, hot,  (temperature-0.66)/0.34);
+            // Hot particles vibrate more
+            pos.xz += vec2(sin(uTime*8.+aOffset*20.), cos(uTime*7.+aOffset*15.)) * temperature * 0.08;
+            vColor *= (0.7 + temperature * 0.5);
+
+        } else if(uColorMode == 1){
+            // Textured: use aColor attribute
+            vColor = aColor;
+        } else {
+            // Default cyan
+            vColor = vec3(0.5, 0.8, 1.0);
+        }
+    }
+`;
+
+const fragmentShader = `
+    varying vec3 vColor;
+    varying float vOpacity;
+    varying float vBrightBoost;
+    varying float vHoloBrightness;
+
+    void main(){
+        float d = distance(gl_PointCoord, vec2(0.5));
+        float strength = 0.05 / d - 0.1;
+        strength = clamp(strength, 0.0, 1.0);
+        float finalBright = vBrightBoost * vHoloBrightness;
+        gl_FragColor = vec4(vColor * finalBright, strength * vOpacity * vHoloBrightness);
+    }
+`;
+
+// ─── Three.js setup ───────────────────────────────────────────────────────────
+scene = new THREE.Scene();
+camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 1, 5);
+
+renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.getElementById('container').appendChild(renderer.domElement);
+
+controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+// Bloom composer
+composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.4, 0.5, 0.82);
+composer.addPass(bloomPass);
+bloomPass.enabled = false;
+
+// ─── Texture sampler ─────────────────────────────────────────────────────────
+function buildTextureSampler(texture) {
+    const img = texture.image;
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width; canvas.height = img.height;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    const ctx = canvas.getContext('2d');
+    return (u, v) => {
+        const x = Math.floor(((u%1)+1)%1 * img.width);
+        const y = Math.floor((1-((v%1)+1)%1) * img.height);
+        const p = ctx.getImageData(x, y, 1, 1).data;
+        return [p[0]/255, p[1]/255, p[2]/255];
+    };
+}
+
+// ─── Color extraction ─────────────────────────────────────────────────────────
+// For image entries (gltf === null), cachedColors holds the precomputed colors.
+// We use the item's stored colors directly in that case.
+function extractColors(gltf, useTexture, itemColors) {
+    // Image-sourced entry: return cached colors directly
+    if (gltf === null) {
+        if (!itemColors) return [];
+        if (!useTexture) {
+            // Replace with flat cyan
+            const out = [];
+            for (let i = 0; i < itemColors.length / 3; i++) out.push(0.5, 0.8, 1.0);
+            return out;
+        }
+        return Array.from(itemColors);
+    }
+
+    const colors = [];
+    gltf.scene.traverse((child) => {
+        if (!child.isMesh) return;
+        const geo = child.geometry;
+        const posAttr = geo.attributes.position;
+        if (!useTexture) {
+            for (let i = 0; i < posAttr.count; i++) colors.push(0.5, 0.8, 1.0);
+            return;
+        }
+        const colAttr = geo.attributes.color;
+        const uvAttr  = geo.attributes.uv;
+        const tex     = child.material?.map;
+        let sample = null;
+        if (tex && tex.image && uvAttr) { try { sample = buildTextureSampler(tex); } catch(e) {} }
+        for (let i = 0; i < posAttr.count; i++) {
+            if (sample && uvAttr) colors.push(...sample(uvAttr.getX(i), uvAttr.getY(i)));
+            else if (child.material?.color) { const c = child.material.color; colors.push(c.r, c.g, c.b); }
+            else if (colAttr) colors.push(colAttr.getX(i), colAttr.getY(i), colAttr.getZ(i));
+            else colors.push(0.5, 0.8, 1.0);
+        }
+    });
+    return colors;
+}
+
+// ─── Build particle system ────────────────────────────────────────────────────
+function buildPoints(vertices, colors) {
+    if (points) { scene.remove(points); points.geometry.dispose(); points.material.dispose(); }
+
+    const posArray = new Float32Array(vertices);
+    const count = posArray.length / 3;
+
+    const randoms = new Float32Array(count * 3);
+    const offsets = new Float32Array(count);
+    for (let i = 0; i < count * 3; i++) randoms[i] = (Math.random() - 0.5) * 2;
+    for (let i = 0; i < count; i++) offsets[i] = Math.random() * Math.PI * 2;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+    geometry.setAttribute('aRandom', new THREE.BufferAttribute(randoms, 3));
+    geometry.setAttribute('aOffset', new THREE.BufferAttribute(offsets, 1));
+    geometry.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(colors), 3));
+
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            uTime:            { value: 0 },
+            uProgress:        { value: 0 },
+            uPhysics:         { value: 0 },
+            uColorMode:       { value: 0 },
+            uFlicker:         { value: false },
+            uHolo:            { value: false },
+            uHoloBrightness:  { value: 1.0 },
+            uCurl:            { value: false },
+            uPalm:            { value: new THREE.Vector2(0, 0) }
+        },
+        vertexShader, fragmentShader,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+
+    points = new THREE.Points(geometry, material);
+    points.scale.setScalar(4);
+    scene.add(points);
+    syncUniforms();
+}
+
+function syncUniforms() {
+    if (!points) return;
+    const u = points.material.uniforms;
+    u.uPhysics.value   = ['linear','vortex','accretion','gravity','drift'].indexOf(physicsMode);
+    u.uColorMode.value = ['untextured','textured','aurora','thermal'].indexOf(colorMode);
+    u.uFlicker.value   = fx.flicker;
+    u.uHolo.value      = fx.holo;
+    u.uCurl.value      = fx.curl;
+}
+
+// ─── Holo flicker: cyberpunk hologram brightness ──────────────────────────────
+// Strategy: long calm periods (brightness=1) punctuated by burst events
+// Each burst = rapid random flickers (5-15 Hz) over ~0.3-0.8s, then calm again
+let holoState = { calm: true, burstEnd: 0, nextBurst: 2.0, brightness: 1.0 };
+
+function updateHolo(t) {
+    if (!fx.holo || !points) return;
+    const u = points.material.uniforms;
+
+    if (holoState.calm) {
+        // Smoothly restore brightness
+        holoState.brightness += (1.0 - holoState.brightness) * 0.1;
+        if (t > holoState.nextBurst) {
+            holoState.calm = false;
+            holoState.burstEnd = t + 0.3 + Math.random() * 0.6;
+        }
+    } else {
+        // Burst mode: irregular rapid flickers
+        // Use multiple layered sin waves at different speeds for irregularity
+        const f1 = Math.sin(t * 47.3) * 0.5 + 0.5;  // fast ~7Hz
+        const f2 = Math.sin(t * 23.1 + 1.2) * 0.5 + 0.5; // medium ~3Hz
+        const f3 = Math.sin(t * 89.7 + 2.4) * 0.5 + 0.5; // very fast ~14Hz
+        // Combined: mostly dark with sudden bright spikes
+        const combined = Math.min(f1, f2) * f3;
+        holoState.brightness = 0.05 + combined * 0.6; // range: 0.05 - 0.65
+
+        if (t > holoState.burstEnd) {
+            holoState.calm = true;
+            // Next burst: 1.5 - 5 seconds away
+            holoState.nextBurst = t + 1.5 + Math.random() * 3.5;
+        }
+    }
+
+    u.uHoloBrightness.value = holoState.brightness;
+}
+
+// ─── GLB Queue (up to 10) ─────────────────────────────────────────────────────
+const MAX_QUEUE = 10;
+const glbQueue = [];   // [{ vertices, gltf, colors, name }]
+let queueIndex = 0;    // currently active
+
+function resampleToCount(vertices, targetCount) {
+    const srcCount = vertices.length / 3;
+    if (srcCount === targetCount) return new Float32Array(vertices);
+    const out = new Float32Array(targetCount * 3);
+    for (let i = 0; i < targetCount; i++) {
+        const src = Math.floor(Math.random() * srcCount) * 3;
+        out[i * 3]     = vertices[src];
+        out[i * 3 + 1] = vertices[src + 1];
+        out[i * 3 + 2] = vertices[src + 2];
+    }
+    return out;
+}
+
+function renderQueueUI() {
+    const list = document.getElementById('glb-queue-list');
+    list.innerHTML = '';
+    glbQueue.forEach((item, i) => {
+        const el = document.createElement('div');
+        el.style.cssText = 'font-size:10px;padding:3px 4px;border-radius:3px;margin-bottom:3px;cursor:pointer;border:1px solid #2a2a3e;color:#667;';
+        el.textContent = (i === queueIndex ? '▶ ' : '○ ') + item.name;
+        if (i === queueIndex) { el.style.borderColor = '#00ffcc88'; el.style.color = '#00ffcc'; }
+        el.onclick = () => activateQueueIndex(i);
+        list.appendChild(el);
+    });
+    document.getElementById('btn-reset-swap').style.display = glbQueue.length > 1 ? 'block' : 'none';
+    const addGlbBtn = document.getElementById('label-add-glb');
+    const addImgBtn = document.getElementById('label-add-image');
+    const queueFull = glbQueue.length >= MAX_QUEUE;
+    addGlbBtn.style.opacity = queueFull ? '0.3' : '1';
+    addGlbBtn.style.pointerEvents = queueFull ? 'none' : 'auto';
+    addImgBtn.style.opacity = queueFull ? '0.3' : '1';
+    addImgBtn.style.pointerEvents = queueFull ? 'none' : 'auto';
+}
+
+function activateQueueIndex(idx) {
+    if (idx < 0 || idx >= glbQueue.length) return;
+    queueIndex = idx;
+    hasSwapped = false;
+    const item = glbQueue[idx];
+    cachedVertices = item.vertices;
+    cachedGltf = item.gltf;
+    cachedColors = item.colors || null;
+    const colors = extractColors(item.gltf, colorMode === 'textured', item.colors);
+    buildPoints(item.vertices, colors);
+    renderQueueUI();
+    STATUS.textContent = `active: ${item.name} — fist: gather · open: scatter`;
+}
+
+// Silent swap during scatter: swap buffers to next in queue
+function swapToNext() {
+    if (hasSwapped) return;
+    const nextIdx = (queueIndex + 1) % glbQueue.length;
+    if (nextIdx === queueIndex || glbQueue.length < 2) return;
+    hasSwapped = true;
+
+    const geo = points.geometry;
+    const targetCount = geo.attributes.position.count;
+    const next = glbQueue[nextIdx];
+
+    const newPos = resampleToCount(next.vertices, targetCount);
+    geo.attributes.position.array.set(newPos);
+    geo.attributes.position.needsUpdate = true;
+
+    const rawColors = extractColors(next.gltf, colorMode === 'textured', next.colors);
+    const newColors = resampleToCount(rawColors, targetCount);
+    geo.attributes.aColor.array.set(newColors);
+    geo.attributes.aColor.needsUpdate = true;
+
+    queueIndex = nextIdx;
+    cachedVertices = Array.from(newPos);
+    cachedGltf = next.gltf;
+    cachedColors = next.colors || null;
+    renderQueueUI();
+    STATUS.textContent = `switched to: ${next.name} — fist to gather`;
+}
+
+window.resetQueue = function() {
+    activateQueueIndex(0);
+};
+
+// ─── Load model ───────────────────────────────────────────────────────────────
+function extractVertices(gltf) {
+    const vertices = [];
+    gltf.scene.traverse((child) => {
+        if (!child.isMesh) return;
+        const pos = child.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) vertices.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+    });
+    return vertices;
+}
+
+function processGltf(gltf, name) {
+    if (glbQueue.length >= MAX_QUEUE) {
+        STATUS.textContent = `queue full (max ${MAX_QUEUE})`;
+        return;
+    }
+    const vertices = extractVertices(gltf);
+    // colors is null for GLB entries — extracted lazily via extractColors(gltf, ...)
+    glbQueue.push({ vertices, gltf, colors: null, name });
+    renderQueueUI();
+
+    if (glbQueue.length === 1) {
+        // First model: activate immediately
+        activateQueueIndex(0);
+    } else {
+        STATUS.textContent = `queued: ${name} (${glbQueue.length}/${MAX_QUEUE}) — open hand to switch`;
+    }
+}
+
+// ─── Image → Particles ────────────────────────────────────────────────────────
+const IMAGE_BRIGHTNESS_THRESHOLD = 0.15;
+const IMAGE_MAX_PARTICLES = 120000;
+
+function processImage(file) {
+    if (glbQueue.length >= MAX_QUEUE) {
+        STATUS.textContent = `queue full (max ${MAX_QUEUE})`;
+        return;
+    }
+    STATUS.textContent = `loading image: ${file.name}...`;
+
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        URL.revokeObjectURL(url);
+
+        // Determine sampling grid size aiming for 50k–150k particles max
+        // Start with 300×300 = 90k, adjust based on image aspect ratio
+        const aspect = img.width / img.height;
+        let gridH = 300;
+        let gridW = Math.round(gridH * aspect);
+        // Cap to keep particle count reasonable
+        const maxDim = Math.round(Math.sqrt(IMAGE_MAX_PARTICLES * aspect));
+        if (gridW > maxDim) { gridW = maxDim; gridH = Math.round(gridW / aspect); }
+
+        // Draw image to canvas and sample pixels
+        const canvas = document.createElement('canvas');
+        canvas.width = gridW;
+        canvas.height = gridH;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, gridW, gridH);
+        const imageData = ctx.getImageData(0, 0, gridW, gridH).data;
+
+        const vertices = [];
+        const colors = [];
+
+        // Normalized coordinate range: ±1 (matching GLB model scale convention)
+        // x: left→right, y: top→bottom (flip y so top is positive)
+        const scaleX = 2.0 / gridW;
+        const scaleY = 2.0 / gridH;
+
+        for (let row = 0; row < gridH; row++) {
+            for (let col = 0; col < gridW; col++) {
+                const idx = (row * gridW + col) * 4;
+                const r = imageData[idx]     / 255;
+                const g = imageData[idx + 1] / 255;
+                const b = imageData[idx + 2] / 255;
+                const a = imageData[idx + 3] / 255;
+
+                // Perceived brightness (luminance)
+                const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if (brightness < IMAGE_BRIGHTNESS_THRESHOLD || a < 0.1) continue;
+
+                // Center the grid: x in [-1, +1], y in [-1, +1] (flip row)
+                const x = (col + 0.5) * scaleX - 1.0;
+                const y = 1.0 - (row + 0.5) * scaleY;
+                const z = (Math.random() - 0.5) * 0.1; // slight Z depth ±0.05
+
+                vertices.push(x, y, z);
+                colors.push(r, g, b);
             }
         }
-    </script>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-
-        // MediaPipe 脚本加载逻辑
-        const mpScript = document.createElement('script');
-        mpScript.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
-        document.head.appendChild(mpScript);
-        const camScript = document.createElement('script');
-        camScript.src = "https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js";
-        document.head.appendChild(camScript);
-
-        // --- 变量定义 ---
-        let scene, camera, renderer, controls, points;
-        let targetProgress = 0; // 手势目标状态：0 聚合，1 扩散
-        let currentProgress = 0; // 当前动画进度
-        const videoElement = document.getElementById('input_video');
-        const statusElement = document.getElementById('status');
-
-        // --- 着色器代码 ---
-        const vertexShader = `
-            uniform float uTime;
-            uniform float uProgress;
-            attribute vec3 aRandom;
-            varying float vOpacity;
-
-            void main() {
-                // 基础位置
-                vec3 pos = position;
-
-                // 1. 轻微飘浮/抖动
-                pos.x += sin(uTime * 0.5 + position.y * 10.0) * 0.02;
-                pos.y += cos(uTime * 0.4 + position.x * 10.0) * 0.02;
-
-                // 2. 扩散动画：根据 uProgress 将粒子沿随机方向推开
-                // aRandom 是在 JS 中生成的随机向量
-                pos += aRandom * uProgress * 2.5;
-
-                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
-
-                // 粒子大小随距离衰减
-                gl_PointSize = (15.0 / -mvPosition.z);
-                gl_Position = projectionMatrix * mvPosition;
-
-                // 3. 透明度随扩散增加而减小
-                vOpacity = 1.0 - uProgress * 0.8;
-            }
-        `;
-
-        const fragmentShader = `
-            varying float vOpacity;
-            void main() {
-                // 制作软圆点：计算点内坐标到中心的距离
-                float d = distance(gl_PointCoord, vec2(0.5));
-                float strength = 0.05 / d - 0.1; // 边缘渐隐公式
-                strength = clamp(strength, 0.0, 1.0);
-
-                // 发光颜色（淡青色/白色）
-                vec3 color = vec3(0.5, 0.8, 1.0);
-                gl_FragColor = vec4(color, strength * vOpacity);
-            }
-        `;
-
-        // --- 初始化 Three.js ---
-        function initThree() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 1, 5);
-
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            document.getElementById('container').appendChild(renderer.domElement);
-
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-
-            // 环境光
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-            scene.add(ambientLight);
-
-            loadModel();
-            window.addEventListener('resize', onWindowResize);
-            animate();
+        if (vertices.length === 0) {
+            STATUS.textContent = `image too dark — no particles above threshold`;
+            return;
         }
 
-        // --- 加载模型并转换粒子 ---
-        function loadModel() {
-            const loader = new GLTFLoader();
-            loader.load('./莲花.glb', (gltf) => {
-                const vertices = [];
-                gltf.scene.traverse((child) => {
-                    if (child.isMesh) {
-                        // 提取顶点位置
-                        const posAttr = child.geometry.attributes.position;
-                        for (let i = 0; i < posAttr.count; i++) {
-                            vertices.push(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
-                        }
-                    }
-                });
+        const name = file.name;
+        // Store colors as Float32Array alongside vertices
+        const colorsF32 = new Float32Array(colors);
+        glbQueue.push({ vertices, gltf: null, colors: colorsF32, name });
+        renderQueueUI();
 
-                const geometry = new THREE.BufferGeometry();
-                const posArray = new Float32Array(vertices);
-                geometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-
-                // 生成随机偏移向量供扩散使用
-                const randomArray = new Float32Array(posArray.length);
-                for (let i = 0; i < posArray.length; i++) {
-                    randomArray[i] = (Math.random() - 0.5) * 2.0;
-                }
-                geometry.setAttribute('aRandom', new THREE.BufferAttribute(randomArray, 3));
-
-                // 创建着色器材质
-                const material = new THREE.ShaderMaterial({
-                    uniforms: {
-                        uTime: { value: 0 },
-                        uProgress: { value: 0 }
-                    },
-                    vertexShader,
-                    fragmentShader,
-                    transparent: true,
-                    blending: THREE.AdditiveBlending,
-                    depthWrite: false
-                });
-
-                points = new THREE.Points(geometry, material);
-                points.scale.setScalar(4);
-                scene.add(points);
-                statusElement.innerText = "模型加载成功，请展示手势（握拳聚合，张掌扩散）";
-            }, undefined, (error) => {
-                console.error(error);
-                statusElement.innerText = "模型加载失败";
-            });
+        if (glbQueue.length === 1) {
+            activateQueueIndex(0);
+        } else {
+            STATUS.textContent = `queued: ${name} (${glbQueue.length}/${MAX_QUEUE}) — ${vertices.length / 3 | 0} particles`;
         }
+    };
+    img.onerror = () => {
+        URL.revokeObjectURL(url);
+        STATUS.textContent = `failed to load image: ${file.name}`;
+    };
+    img.src = url;
+}
 
-        // --- MediaPipe 手势识别 ---
-        function initHandTracking() {
-            // 等待库加载
-            const timer = setInterval(() => {
-                if (window.Hands && window.Camera) {
-                    clearInterval(timer);
-                    setupMediaPipe();
-                }
-            }, 100);
+const loader = new GLTFLoader();
+loader.load('./莲花.glb',
+    (gltf) => { processGltf(gltf, '莲花.glb'); },
+    undefined,
+    (err)  => { STATUS.textContent = 'load failed: ' + err.message; }
+);
+
+// ─── Mode switching ───────────────────────────────────────────────────────────
+window.setColorMode = function(mode) {
+    colorMode = mode;
+    ['untextured','textured','aurora','thermal'].forEach(m =>
+        document.getElementById('btn-' + m)?.classList.toggle('active', m === mode)
+    );
+    if (cachedVertices) {
+        const item = glbQueue[queueIndex];
+        const itemColors = item ? (item.colors || null) : cachedColors;
+        buildPoints(cachedVertices, extractColors(cachedGltf, mode === 'textured', itemColors));
+    }
+};
+
+window.setPhysics = function(mode) {
+    physicsMode = mode;
+    ['linear','vortex','accretion','gravity'].forEach(m =>
+        document.getElementById('btn-' + m)?.classList.toggle('active', m === mode)
+    );
+    syncUniforms();
+};
+
+window.toggleFX = function(name) {
+    fx[name] = !fx[name];
+    document.getElementById('btn-' + name)?.classList.toggle('toggle-on', fx[name]);
+    if (name === 'bloom') { bloomPass.enabled = fx.bloom; return; }
+    syncUniforms();
+};
+
+// ─── Spring physics ───────────────────────────────────────────────────────────
+function updateProgress() {
+    if (fx.spring) {
+        const force = -0.08 * (currentProgress - targetProgress);
+        velocity = (velocity + force) * 0.90;
+        currentProgress += velocity;
+    } else {
+        currentProgress += (targetProgress - currentProgress) * 0.03;
+    }
+}
+
+// ─── Animation loop ───────────────────────────────────────────────────────────
+function animate() {
+    requestAnimationFrame(animate);
+    const time = performance.now() * 0.001;
+
+    if (points) {
+        points.rotation.y += 0.004;
+        updateProgress();
+        updateHolo(time);
+
+        // Auto-swap to next GLB when fully scattered
+        if (!hasSwapped && glbQueue.length > 1 && currentProgress > 0.95) {
+            swapToNext();
         }
-
-        function setupMediaPipe() {
-            const hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 1,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
-            });
-
-            hands.onResults((results) => {
-                if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                    const landmarks = results.multiHandLandmarks[0];
-
-                    // 简单的手势逻辑：计算手指尖到掌心（Landmark 0）的平均距离
-                    // 0: 腕部, 8: 食指尖, 12: 中指尖, 16: 无名指尖, 20: 小指尖
-                    const tips = [8, 12, 16, 20];
-                    let totalDist = 0;
-                    tips.forEach(idx => {
-                        const dx = landmarks[idx].x - landmarks[0].x;
-                        const dy = landmarks[idx].y - landmarks[0].y;
-                        totalDist += Math.sqrt(dx * dx + dy * dy);
-                    });
-
-                    const avgDist = totalDist / 4;
-                    // 经验值：大于 0.4 视为张开，小于 0.2 视为握拳
-                    if (avgDist > 0.35) {
-                        targetProgress = 1.0; // 扩散
-                    } else if (avgDist < 0.22) {
-                        targetProgress = 0.0; // 聚合
-                    }
-                }
-            });
-
-            const cameraPipe = new Camera(videoElement, {
-                onFrame: async () => {
-                    await hands.send({ image: videoElement });
-                },
-                width: 640,
-                height: 480
-            });
-            cameraPipe.start();
+        // Reset hasSwapped when particles are gathered (allow next scatter to trigger swap)
+        if (hasSwapped && currentProgress < 0.05) {
+            hasSwapped = false;
         }
+        const u = points.material.uniforms;
+        u.uTime.value     = time;
+        u.uProgress.value = Math.max(0, Math.min(1, currentProgress));
+        u.uPalm.value.set(palmX, palmY);
+    }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
+    controls.update();
+    if (fx.bloom) composer.render();
+    else renderer.render(scene, camera);
+}
+animate();
 
-        function animate() {
-            requestAnimationFrame(animate);
+// ─── File upload / drag-drop ──────────────────────────────────────────────────
+function loadGLBFromFile(file) {
+    if (!file?.name.endsWith('.glb')) return;
+    if (glbQueue.length >= MAX_QUEUE) { STATUS.textContent = `queue full (max ${MAX_QUEUE})`; return; }
+    STATUS.textContent = `loading ${file.name}...`;
+    const url = URL.createObjectURL(file);
+    new GLTFLoader().load(url, (gltf) => {
+        processGltf(gltf, file.name);
+        URL.revokeObjectURL(url);
+    }, undefined, (err) => { STATUS.textContent = 'error: ' + err.message; });
+}
 
-            const time = performance.now() * 0.001;
+document.getElementById('file-input-add').addEventListener('change', e => {
+    Array.from(e.target.files).forEach(f => loadGLBFromFile(f));
+    e.target.value = '';
+});
 
-            if (points) {
-                // 1. 整体缓慢旋转
-                points.rotation.y += 0.005;
+document.getElementById('file-input-image').addEventListener('change', e => {
+    Array.from(e.target.files).forEach(f => processImage(f));
+    e.target.value = '';
+});
 
-                // 2. 平滑插值动画 (Lerp) 使得汇聚效果流畅
-                currentProgress += (targetProgress - currentProgress) * 0.03;
+const dropOverlay = document.getElementById('drop-overlay');
+document.addEventListener('dragover', e => { e.preventDefault(); dropOverlay.classList.add('active'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) dropOverlay.classList.remove('active'); });
+document.addEventListener('drop', e => {
+    e.preventDefault(); dropOverlay.classList.remove('active');
+    Array.from(e.dataTransfer.files).forEach(f => {
+        if (f.name.endsWith('.glb')) loadGLBFromFile(f);
+        else if (f.type.startsWith('image/')) processImage(f);
+    });
+});
 
-                // 3. 更新着色器 Uniforms
-                points.material.uniforms.uTime.value = time;
-                points.material.uniforms.uProgress.value = currentProgress;
-            }
+// ─── Resize ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+});
 
-            controls.update();
-            renderer.render(scene, camera);
-        }
-
-        // 启动
-        initThree();
-        initHandTracking();
-
-    </script>
+// ─── MediaPipe hand tracking ──────────────────────────────────────────────────
+function initHands() {
+    const timer = setInterval(() => {
+        if (!window.Hands || !window.Camera) return;
+        clearInterval(timer);
+        const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(res => {
+            if (!res.multiHandLandmarks?.length) return;
+            const lm = res.multiHandLandmarks[0];
+            // Palm center for gravity mode
+            palmX = (lm[9].x - 0.5) * 8.0;
+            palmY = -(lm[9].y - 0.5) * 6.0;
+            // Open/close detection
+            const tips = [8, 12, 16, 20];
+            const avg = tips.reduce((s, i) => s + Math.hypot(lm[i].x - lm[0].x, lm[i].y - lm[0].y), 0) / 4;
+            if (avg > 0.35) targetProgress = 1.0;
+            else if (avg < 0.22) targetProgress = 0.0;
+        });
+        new Camera(document.getElementById('input_video'), {
+            onFrame: async () => await hands.send({ image: document.getElementById('input_video') }),
+            width: 640, height: 480
+        }).start();
+    }, 150);
+}
+initHands();
+</script>
 </body>
 </html>
