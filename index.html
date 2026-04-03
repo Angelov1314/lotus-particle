@@ -77,6 +77,7 @@
         </div>
         <div class="btn-row">
             <button class="btn" id="btn-drift" onclick="setPhysics('drift')">↑ drift</button>
+            <button class="btn" id="btn-tesseract" onclick="setPhysics('tesseract')">4D flow</button>
         </div>
     </div>
 
@@ -147,7 +148,7 @@ const STATUS = document.getElementById('status');
 const vertexShader = `
     uniform float uTime;
     uniform float uProgress;
-    uniform int uPhysics;     // 0=linear, 1=vortex, 2=accretion, 3=gravity, 4=drift
+    uniform int uPhysics;     // 0=linear, 1=vortex, 2=accretion, 3=gravity, 4=drift, 5=tesseract
     uniform int uColorMode;   // 0=cyan, 1=texture, 2=aurora, 3=thermal
     uniform bool uFlicker;
     uniform bool uHolo;
@@ -238,6 +239,7 @@ const vertexShader = `
         vec3 pos = position;
 
         // ── Physics ───────────────────────────────────────────────────────────
+        float projScale = 1.0; // overridden by 4D projection in mode 5
         if(uPhysics == 1){
             // Vortex: spiral inward on fist
             float angle = uProgress * 5.0 * (1.0 - length(pos.xz) * 0.5);
@@ -275,6 +277,41 @@ const vertexShader = `
             pos.y = mod(pos.y + 2.0, 4.0) - 2.0;
             pos += aRandom * uProgress * 2.5;
 
+        } else if(uPhysics == 5){
+            // ── 4D Tesseract Flow ────────────────────────────────────────────
+            // Extend particle to 4D: (x, y, z, w=0).
+            // Rotate simultaneously in XW and YW planes.
+            // As uProgress→1, outer petals flip inward and inner stamen bursts out.
+            // Ambient time-spin gives a slow continuous 4D shimmer even at rest.
+            float w = 0.0;
+
+            // Primary XW rotation: progress drives the "inversion" flip
+            float angle = uProgress * 3.14159265;
+            float ambient = uTime * 0.12; // slow ambient spin
+            float cosA = cos(angle + ambient);
+            float sinA = sin(angle + ambient);
+            float xRot = pos.x * cosA - w * sinA;
+            float wRot = pos.x * sinA + w * cosA;
+
+            // Secondary YW rotation at different speed/phase for 4D "tumble"
+            float cosB = cos(angle * 0.6 + ambient * 1.4 + 1.57);
+            float sinB = sin(angle * 0.6 + ambient * 1.4 + 1.57);
+            float yRot = pos.y * cosB - wRot * sinB;
+            float wFinal = pos.y * sinB + wRot * cosB;
+
+            // Stereographic projection 4D→3D: P' = P * (dist / (dist - w))
+            // Particles with w→dist appear to shoot toward infinity (eversion).
+            float dist4 = 2.5;
+            projScale = dist4 / (dist4 - wFinal);
+            projScale = clamp(projScale, 0.1, 6.0); // guard against singularity
+
+            pos.x = xRot  * projScale;
+            pos.y = yRot  * projScale;
+            pos.z = pos.z * projScale;
+
+            // Small random offset scaled by projection — keeps glow organic
+            pos += aRandom * uProgress * 0.6 * projScale;
+
         } else {
             // Linear
             pos += aRandom * uProgress * 2.5;
@@ -298,7 +335,8 @@ const vertexShader = `
 
         vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
         float baseSize = uFlicker ? (15.0 + flickerOn * 6.0) : 15.0;
-        gl_PointSize = baseSize / -mvPosition.z;
+        // In 4D mode, projScale makes near-projected particles physically larger
+        gl_PointSize = baseSize * projScale / -mvPosition.z;
         gl_Position = projectionMatrix * mvPosition;
 
         vWorldPos = (modelMatrix * vec4(pos, 1.0)).xyz;
@@ -500,7 +538,7 @@ function buildPoints(vertices, colors) {
 function syncUniforms() {
     if (!points) return;
     const u = points.material.uniforms;
-    u.uPhysics.value   = ['linear','vortex','accretion','gravity','drift'].indexOf(physicsMode);
+    u.uPhysics.value   = ['linear','vortex','accretion','gravity','drift','tesseract'].indexOf(physicsMode);
     u.uColorMode.value = ['untextured','textured','aurora','thermal'].indexOf(colorMode);
     u.uFlicker.value   = fx.flicker;
     u.uHolo.value      = fx.holo;
@@ -786,7 +824,7 @@ window.setColorMode = function(mode) {
 
 window.setPhysics = function(mode) {
     physicsMode = mode;
-    ['linear','vortex','accretion','gravity'].forEach(m =>
+    ['linear','vortex','accretion','gravity','drift','tesseract'].forEach(m =>
         document.getElementById('btn-' + m)?.classList.toggle('active', m === mode)
     );
     syncUniforms();
