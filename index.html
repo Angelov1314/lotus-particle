@@ -304,39 +304,38 @@ const vertexShader = `
 
         } else if(uPhysics == 5){
             // ── 4D Tesseract Flow ────────────────────────────────────────────
-            // Extend particle to 4D: (x, y, z, w=0).
-            // Rotate in XW plane driven by progress → inversion flip on gesture.
-            // Ambient spin is scaled by uProgress so flower is pristine at rest.
+            // Always-on idle rotation in 4D so the effect is visible even
+            // without hand gestures. Progress amplifies the rotation angle.
             float w = 0.0;
 
+            // Idle: slow continuous 4D spin (always active)
+            // Gesture: adds up to ~160° of dramatic inversion
+            float idle    = uTime * 0.08;                 // always runs
+            float gesture = uProgress * 2.8;              // 0→160° with hand
+            float angle   = idle + gesture;
+
             // Primary XW rotation
-            // ambient is gated by progress so at rest (progress≈0) we stay identity
-            float angle  = uProgress * 2.8;          // ~160° max, avoids full flip singularity
-            float ambient = uTime * 0.10 * uProgress; // zero at rest → no idle distortion
-            float cosA = cos(angle + ambient);
-            float sinA = sin(angle + ambient);
+            float cosA = cos(angle);
+            float sinA = sin(angle);
             float xRot = pos.x * cosA - w * sinA;
             float wRot = pos.x * sinA + w * cosA;
 
-            // Secondary ZW rotation (half-speed, preserves Y spread unlike YW)
-            float cosB = cos(angle * 0.5 + ambient * 0.8);
-            float sinB = sin(angle * 0.5 + ambient * 0.8);
+            // Secondary ZW rotation (half-speed, preserves Y spread)
+            float cosB = cos(angle * 0.5);
+            float sinB = sin(angle * 0.5);
             float zRot   = pos.z * cosB - wRot * sinB;
             float wFinal = pos.z * sinB + wRot * cosB;
 
-            // Stereographic projection 4D→3D: P' = P * (dist / (dist - w))
+            // Stereographic projection 4D→3D
             float dist4 = 2.5;
             projScale = dist4 / (dist4 - wFinal);
-            // Guard singularity but allow strong variation
             projScale = clamp(projScale, 0.4, 5.0);
 
-            // Apply directly — angle is already gated by uProgress so
-            // at progress=0 the rotation is identity (no need for extra mix)
             pos.x = xRot  * projScale;
             pos.y = pos.y  * projScale;
             pos.z = zRot   * projScale;
 
-            // Random scatter proportional to projection, gated by progress
+            // Scatter on gesture
             pos += aRandom * uProgress * 0.6 * projScale;
 
         } else if(uPhysics == 6){
@@ -356,12 +355,12 @@ const vertexShader = `
                        - (p.x * p.x + p.y * p.y) * (1.0 + ee * p.z)
                        + f * p.z * p.x * p.x * p.x;
 
-            // Pull particles along the attractor field proportional to progress
-            // Multi-step integration (3 Euler steps) for smoother orbital feel
-            float dt = uProgress * 0.6;
+            // Idle: always apply a base attractor pull (dt=0.15) so the
+            // effect is visible without hand gestures. Gesture adds more.
+            float dt = 0.15 + uProgress * 0.5;
             vec3 vel = vec3(dx, dy, dz);
             pos += vel * dt;
-            // second step: re-evaluate at displaced position for smoother arcs
+            // Second Euler step for smoother arcs
             vec3 p2 = (position + vel * dt * 0.5) * 0.9;
             float dx2 = (p2.z - b) * p2.x - d * p2.y;
             float dy2 = d * p2.x + (p2.z - b) * p2.y;
@@ -370,11 +369,11 @@ const vertexShader = `
                         + f * p2.z * p2.x * p2.x * p2.x;
             pos += vec3(dx2, dy2, dz2) * dt * 0.4;
 
-            // Slow time-rotation of the whole attractor — gives the cocoon a spin
-            pos = rotateY(pos, uTime * 0.18 * uProgress);
+            // Always-on slow cocoon spin + extra with gesture
+            pos = rotateY(pos, uTime * 0.12 + uProgress * 0.5);
 
-            // Subtle random texture to break pure mathematical smoothness
-            pos += aRandom * uProgress * 0.4;
+            // Subtle scatter
+            pos += aRandom * (0.05 + uProgress * 0.35);
 
         } else {
             // Linear
