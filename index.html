@@ -1178,8 +1178,8 @@ function processImage(file) {
 }
 
 const loader = new GLTFLoader();
-loader.load('./莲花.glb',
-    (gltf) => { processGltf(gltf, '莲花.glb'); },
+loader.load('./lotus.glb',
+    (gltf) => { processGltf(gltf, 'lotus.glb'); },
     undefined,
     (err)  => { STATUS.textContent = 'load failed: ' + err.message; }
 );
